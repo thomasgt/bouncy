@@ -1,25 +1,33 @@
+use std::time::Duration;
+
+use ringbuffer::RingBuffer;
+
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
-pub struct TemplateApp {
-    // Example stuff:
-    label: String,
-
+pub struct App {
     #[serde(skip)] // This how you opt-out of serialization of a field
     value: f32,
+
+    #[serde(skip)]
+    target_frame_rate: f64,
+
+    // Ring buffer of last 100 frame times:
+    #[serde(skip)]
+    previous_frame_times: ringbuffer::AllocRingBuffer<web_time::Instant>,
 }
 
-impl Default for TemplateApp {
+impl Default for App {
     fn default() -> Self {
         Self {
-            // Example stuff:
-            label: "Hello World!".to_owned(),
             value: 2.7,
+            target_frame_rate: 60.0,
+            previous_frame_times: ringbuffer::AllocRingBuffer::new(100),
         }
     }
 }
 
-impl TemplateApp {
+impl App {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // This is also where you can customize the look and feel of egui using
@@ -33,9 +41,35 @@ impl TemplateApp {
 
         Default::default()
     }
+
+    fn update_frame_time(&mut self) -> std::time::Duration {
+        let now = web_time::Instant::now();
+
+        let dt = if let Some(prev) = self.previous_frame_times.back() {
+            now - *prev
+        } else {
+            web_time::Duration::from_secs_f64(1.0 / self.target_frame_rate)
+        };
+
+        self.previous_frame_times.push(now);
+        dt
+    }
+
+    fn compute_fps(&self) -> f64 {
+        if self.previous_frame_times.len() < 2 {
+            return self.target_frame_rate;
+        }
+
+        let first = self.previous_frame_times.front().unwrap();
+        let last = self.previous_frame_times.back().unwrap();
+        let elapsed = *last - *first;
+        let elapsed_secs = elapsed.as_secs_f64();
+        let fps = (self.previous_frame_times.len() as f64 - 1.0) / elapsed_secs;
+        fps
+    }
 }
 
-impl eframe::App for TemplateApp {
+impl eframe::App for App {
     /// Called by the frame work to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
@@ -43,6 +77,12 @@ impl eframe::App for TemplateApp {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let dt = self.update_frame_time();
+        let fps = self.compute_fps();
+
+        // Schedule a repaint at the next frame
+        ctx.request_repaint_after(Duration::from_secs_f64(1.0 / self.target_frame_rate));
+
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
 
@@ -67,17 +107,14 @@ impl eframe::App for TemplateApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
-            ui.heading("eframe template");
-
-            ui.horizontal(|ui| {
-                ui.label("Write something: ");
-                ui.text_edit_singleline(&mut self.label);
-            });
+            ui.heading("Bouncy");
 
             ui.add(egui::Slider::new(&mut self.value, 0.0..=10.0).text("value"));
             if ui.button("Increment").clicked() {
                 self.value += 1.0;
             }
+
+            ui.label(format!("FPS: {:.1}", fps));
 
             ui.separator();
 
