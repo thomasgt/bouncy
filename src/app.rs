@@ -64,8 +64,8 @@ impl App {
         let last = self.previous_frame_times.back().unwrap();
         let elapsed = *last - *first;
         let elapsed_secs = elapsed.as_secs_f64();
-        let fps = (self.previous_frame_times.len() as f64 - 1.0) / elapsed_secs;
-        fps
+
+        (self.previous_frame_times.len() as f64 - 1.0) / elapsed_secs
     }
 }
 
@@ -77,7 +77,7 @@ impl eframe::App for App {
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let dt = self.update_frame_time();
+        let _dt = self.update_frame_time();
         let fps = self.compute_fps();
 
         // Schedule a repaint at the next frame
