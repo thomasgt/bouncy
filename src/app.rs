@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use egui::{emath::TSTransform, Color32, Pos2, RichText, Vec2};
+use egui::{emath::TSTransform, Color32, Pos2, Vec2};
 use ringbuffer::RingBuffer;
 
 pub struct Collision {
@@ -317,41 +317,40 @@ impl eframe::App for App {
             // The central panel the region left after adding TopPanel's and SidePanel's
             ui.heading("Bouncy");
 
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Shape:").strong());
-                ui.label("Sides");
-                if ui
-                    .add(egui::Slider::new(&mut self.polygon.num_sides, 3..=12).text("ea"))
-                    .changed()
-                {
-                    self.ball.reset();
-                }
+            ui.collapsing("Shape Settings", |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Sides");
+                    if ui
+                        .add(egui::Slider::new(&mut self.polygon.num_sides, 3..=12).text("ea"))
+                        .changed()
+                    {
+                        self.ball.reset();
+                    }
+                });
 
-                ui.label("Angular velocity");
-                ui.add(
-                    egui::Slider::new(&mut self.polygon.angular_velocity, -5.0..=5.0)
-                        .text("(rad/s)"),
-                );
+                ui.horizontal(|ui| {
+                    ui.label("Angular velocity");
+                    ui.add(
+                        egui::Slider::new(&mut self.polygon.angular_velocity, -5.0..=5.0)
+                            .text("(rad/s)"),
+                    );
+                });
             });
 
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("World:").strong());
-                ui.label("Gravity");
-                ui.add(egui::Slider::new(&mut self.gravity, 0.0..=20.0).text("(m/s²)"));
-                ui.label("Rate of Time");
-                ui.add(egui::Slider::new(&mut self.time_rate, 0.0..=5.0).text("X"));
+            ui.collapsing("World Settings", |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Gravity");
+                    ui.add(egui::Slider::new(&mut self.gravity, 0.0..=20.0).text("(m/s²)"));
+                })
             });
 
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Ball:").strong());
-                if ui
-                    .button("Reset")
-                    .on_hover_text("Reset the ball's position and velocity.")
-                    .clicked()
-                {
-                    self.ball.reset();
-                }
-            });
+            if ui
+                .button("Reset Ball")
+                .on_hover_text("Reset the ball's position and velocity.")
+                .clicked()
+            {
+                self.ball.reset();
+            }
 
             ui.separator();
 
