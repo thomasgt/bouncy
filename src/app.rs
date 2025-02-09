@@ -125,7 +125,7 @@ impl eframe::App for App {
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 powered_by_egui_and_eframe(ui);
                 ui.add(egui::github_link_file!(
-                    "https://github.com/emilk/eframe_template/blob/main/",
+                    "https://github.com/thomasgt/bouncy/blob/main/",
                     "Source code."
                 ));
                 ui.label(format!("FPS: {:.1}", fps));
