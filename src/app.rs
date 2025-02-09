@@ -2,43 +2,43 @@ use std::time::Duration;
 
 use ringbuffer::RingBuffer;
 
-/// We derive Deserialize/Serialize so we can persist app state on shutdown.
-#[derive(serde::Deserialize, serde::Serialize)]
-#[serde(default)] // if we add new fields, give them default values when deserializing old state
+pub struct Hexagon {
+    pub center: egui::Pos2,
+    pub radius: f32,
+    pub angle: f32,
+}
+
+impl Default for Hexagon {
+    fn default() -> Self {
+        Self {
+            center: egui::Pos2::new(0.0, 0.0),
+            radius: 1.0,
+            angle: 0.0,
+        }
+    }
+}
+
 pub struct App {
-    #[serde(skip)] // This how you opt-out of serialization of a field
-    value: f32,
-
-    #[serde(skip)]
     target_frame_rate: f64,
-
-    // Ring buffer of last 100 frame times:
-    #[serde(skip)]
     previous_frame_times: ringbuffer::AllocRingBuffer<web_time::Instant>,
+    hexagon: Hexagon,
 }
 
 impl Default for App {
     fn default() -> Self {
         Self {
-            value: 2.7,
             target_frame_rate: 60.0,
             previous_frame_times: ringbuffer::AllocRingBuffer::new(100),
+            hexagon: Hexagon::default(),
         }
     }
 }
 
 impl App {
     /// Called once before the first frame.
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         // This is also where you can customize the look and feel of egui using
         // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
-
-        // Load previous app state (if any).
-        // Note that you must enable the `persistence` feature for this to work.
-        if let Some(storage) = cc.storage {
-            return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
-        }
-
         Default::default()
     }
 
@@ -53,6 +53,27 @@ impl App {
 
         self.previous_frame_times.push(now);
         dt
+    }
+
+    fn draw_hexagon(&self, ctx: &egui::Context, painter: &egui::Painter, canvas_rect: egui::Rect) {
+        let Hexagon {
+            center,
+            radius,
+            angle,
+        } = self.hexagon;
+
+        // Offset hexagon center relative to the middle of the canvas
+        let center = center + canvas_rect.center().to_vec2();
+
+        let points = (0..6)
+            .map(|i| {
+                let angle = angle + i as f32 * std::f32::consts::PI / 3.0;
+                center + radius * egui::vec2(angle.cos(), angle.sin())
+            })
+            .collect::<Vec<_>>();
+
+        let stroke = egui::Stroke::new(1.0, ctx.style().visuals.text_color());
+        painter.add(egui::Shape::closed_line(points, stroke));
     }
 
     fn compute_fps(&self) -> f64 {
@@ -70,11 +91,6 @@ impl App {
 }
 
 impl eframe::App for App {
-    /// Called by the frame work to save state before shutdown.
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, eframe::APP_KEY, self);
-    }
-
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let _dt = self.update_frame_time();
@@ -105,27 +121,41 @@ impl eframe::App for App {
             });
         });
 
+        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                powered_by_egui_and_eframe(ui);
+                ui.add(egui::github_link_file!(
+                    "https://github.com/emilk/eframe_template/blob/main/",
+                    "Source code."
+                ));
+                ui.label(format!("FPS: {:.1}", fps));
+                egui::warn_if_debug_build(ui);
+            });
+        });
+
         egui::CentralPanel::default().show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
             ui.heading("Bouncy");
 
-            ui.add(egui::Slider::new(&mut self.value, 0.0..=10.0).text("value"));
-            if ui.button("Increment").clicked() {
-                self.value += 1.0;
-            }
-
-            ui.label(format!("FPS: {:.1}", fps));
+            ui.horizontal(|ui| {
+                ui.label("Hexagon:");
+                ui.add(egui::Slider::new(&mut self.hexagon.radius, 0.0..=100.0).text("radius"));
+                ui.add(
+                    egui::Slider::new(&mut self.hexagon.angle, 0.0..=std::f32::consts::PI)
+                        .text("angle"),
+                );
+            });
 
             ui.separator();
 
-            ui.add(egui::github_link_file!(
-                "https://github.com/emilk/eframe_template/blob/main/",
-                "Source code."
-            ));
+            let available_size = ui.available_size_before_wrap();
 
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                powered_by_egui_and_eframe(ui);
-                egui::warn_if_debug_build(ui);
+            ui.vertical_centered(|ui| {
+                // Allocate a painting region that takes up the remaining space
+                let (response, painter) = ui.allocate_painter(available_size, egui::Sense::hover());
+
+                let canvas_rect = response.rect; // The actual rectangle of the canvas
+                self.draw_hexagon(ctx, &painter, canvas_rect);
             });
         });
     }
