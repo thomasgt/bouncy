@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use egui::{emath::TSTransform, Color32, Pos2, Vec2};
 use ringbuffer::RingBuffer;
 
@@ -153,9 +151,9 @@ impl Ball {
 }
 
 pub struct App {
-    time_rate: f32,
     gravity: f32,
-    target_frame_rate: f64,
+    target_frame_rate: f32,
+    target_simulation_rate: f32,
     previous_frame_times: ringbuffer::AllocRingBuffer<web_time::Instant>,
     polygon: Polygon,
     ball: Ball,
@@ -164,9 +162,9 @@ pub struct App {
 impl Default for App {
     fn default() -> Self {
         Self {
-            time_rate: 1.,
             gravity: 9.81,
             target_frame_rate: 60.0,
+            target_simulation_rate: 1000.0,
             previous_frame_times: ringbuffer::AllocRingBuffer::new(100),
             polygon: Polygon::default(),
             ball: Ball::default(),
@@ -182,20 +180,20 @@ impl App {
         Default::default()
     }
 
-    fn update_frame_time(&mut self) -> std::time::Duration {
+    fn update_frame_time(&mut self) -> web_time::Duration {
         let now = web_time::Instant::now();
 
         let dt = if let Some(prev) = self.previous_frame_times.back() {
             now - *prev
         } else {
-            web_time::Duration::from_secs_f64(1.0 / self.target_frame_rate)
+            web_time::Duration::from_secs_f32(1.0 / self.target_frame_rate)
         };
 
         self.previous_frame_times.push(now);
         dt
     }
 
-    fn compute_fps(&self) -> f64 {
+    fn compute_fps(&self) -> f32 {
         if self.previous_frame_times.len() < 2 {
             return self.target_frame_rate;
         }
@@ -203,9 +201,9 @@ impl App {
         let first = self.previous_frame_times.front().unwrap();
         let last = self.previous_frame_times.back().unwrap();
         let elapsed = *last - *first;
-        let elapsed_secs = elapsed.as_secs_f64();
+        let elapsed_secs = elapsed.as_secs_f32();
 
-        (self.previous_frame_times.len() as f64 - 1.0) / elapsed_secs
+        (self.previous_frame_times.len() as f32 - 1.0) / elapsed_secs
     }
 
     fn handle_collisions(&mut self) {
@@ -223,7 +221,7 @@ impl App {
 
                 let d = (ball.center - p1).dot(n);
 
-                if d < ball.radius {
+                if d.abs() < ball.radius {
                     let p = ball.center - d * n;
                     let t = (p - p1).dot(v) / v.length_sq();
 
@@ -272,13 +270,20 @@ impl App {
 impl eframe::App for App {
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let dt = self.update_frame_time();
+        let dt = self.update_frame_time().as_secs_f32();
         let fps = self.compute_fps();
 
-        self.update_physics(dt.as_secs_f32() * self.time_rate);
+        let n_sub_steps = (dt * self.target_simulation_rate).round();
+        let dt_sim = dt / n_sub_steps;
+
+        for _ in 0..n_sub_steps as usize {
+            self.update_physics(dt_sim);
+        }
 
         // Schedule a repaint at the next frame
-        ctx.request_repaint_after(Duration::from_secs_f64(1.0 / self.target_frame_rate));
+        ctx.request_repaint_after(web_time::Duration::from_secs_f32(
+            1.0 / self.target_frame_rate,
+        ));
 
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
