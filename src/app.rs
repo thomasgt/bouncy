@@ -223,7 +223,7 @@ impl App {
 
                 let d = (ball.center - p1).dot(n);
 
-                if d.abs() < ball.radius {
+                if d < ball.radius {
                     let p = ball.center - d * n;
                     let t = (p - p1).dot(v) / v.length_sq();
 
