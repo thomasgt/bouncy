@@ -1,4 +1,4 @@
-use egui::{emath::TSTransform, Color32, Pos2, Vec2};
+use egui::{emath::TSTransform, Color32, Pos2, Rect, Vec2};
 use ringbuffer::RingBuffer;
 
 pub struct Collision {
@@ -13,6 +13,32 @@ impl Collision {
             point,
             normal,
             time: web_time::Instant::now(),
+        }
+    }
+
+    pub fn rotate(&self, angle: f32, center_of_rotation: Pos2) -> Self {
+        let point = {
+            let p = self.point - center_of_rotation;
+            let p = egui::vec2(
+                p.x * angle.cos() - p.y * angle.sin(),
+                p.x * angle.sin() + p.y * angle.cos(),
+            );
+            center_of_rotation + p
+        };
+
+        let normal = {
+            let n = self.normal;
+            let n = egui::vec2(
+                n.x * angle.cos() - n.y * angle.sin(),
+                n.x * angle.sin() + n.y * angle.cos(),
+            );
+            n
+        };
+
+        Self {
+            point,
+            normal,
+            time: self.time,
         }
     }
 
@@ -39,108 +65,181 @@ impl Collision {
     }
 }
 
-pub struct Polygon {
-    pub num_sides: usize,
-    pub center: egui::Pos2,
-    pub radius: f32,
-    pub angle: f32,
-    pub angular_velocity: f32,
-    pub moment_of_inertia: f32,
-    pub friction_coefficient: f32,
+pub type Segment = (Pos2, Pos2);
+pub type Line = Vec<Pos2>;
+
+pub struct Shape {
+    pub lines: Vec<Line>,
+}
+
+impl Shape {
+    pub fn regular_polygon(num_sides: usize, radius: f32, center: Pos2) -> Self {
+        let angle = 2. * std::f32::consts::PI / num_sides as f32;
+        let lines = (0..num_sides + 1)
+            .map(|i| {
+                let angle = i as f32 * angle;
+                center + radius * egui::vec2(angle.cos(), angle.sin())
+            })
+            .collect();
+
+        Self { lines: vec![lines] }
+    }
+
+    pub fn all_segments(&self) -> Vec<Segment> {
+        self.lines
+            .iter()
+            .flat_map(|line| line.windows(2).map(|w| (w[0], w[1])))
+            .collect()
+    }
+
+    pub fn all_points(&self) -> Vec<Pos2> {
+        self.lines
+            .iter()
+            .flat_map(|line| line.iter().copied())
+            .collect()
+    }
+
+    pub fn max_extent(&self, center_of_rotation: Pos2) -> Rect {
+        let radiuses = self
+            .all_points()
+            .iter()
+            .map(|p| (*p - center_of_rotation).length())
+            .collect::<Vec<f32>>();
+
+        let max_radius = radiuses.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+
+        Rect::from_center_size(center_of_rotation, Vec2::splat(2. * max_radius))
+    }
+
+    pub fn draw(&self, ctx: &egui::Context, painter: &egui::Painter, transform: TSTransform) {
+        let lines = self
+            .lines
+            .iter()
+            .map(|line| {
+                line.iter()
+                    .map(|p| transform.mul_pos(*p))
+                    .collect::<Vec<Pos2>>()
+            })
+            .collect::<Vec<Line>>();
+
+        let stroke = egui::Stroke::new(1.0, ctx.style().visuals.text_color());
+        for line in lines {
+            painter.add(egui::Shape::line(line, stroke));
+        }
+    }
+
+    pub fn rotate(&self, angle: f32, center_of_rotation: Pos2) -> Self {
+        let lines = self
+            .lines
+            .iter()
+            .map(|line| {
+                line.iter()
+                    .map(|p| {
+                        let p = *p - center_of_rotation;
+                        let p = egui::vec2(
+                            p.x * angle.cos() - p.y * angle.sin(),
+                            p.x * angle.sin() + p.y * angle.cos(),
+                        );
+                        center_of_rotation + p
+                    })
+                    .collect()
+            })
+            .collect();
+
+        Self { lines }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RotatingInput {
     pub braking_torque: f32,
     pub motor_torque: f32,
     pub boost_torque: f32,
     pub brake: bool,
     pub motor: bool,
     pub boost: bool,
-    collisions: ringbuffer::AllocRingBuffer<Collision>,
 }
 
-impl Default for Polygon {
+impl Default for RotatingInput {
     fn default() -> Self {
         Self {
-            num_sides: 6,
-            center: egui::Pos2::new(0.0, 0.0),
-            radius: 1.0,
-            angle: 0.,
-            angular_velocity: 1.0,
-            moment_of_inertia: 1.0,
-            friction_coefficient: 0.7,
-            braking_torque: 1.0,
+            braking_torque: 2.0,
             motor_torque: 1.0,
             boost_torque: 1.0,
             brake: false,
             motor: true,
             boost: false,
-            collisions: ringbuffer::AllocRingBuffer::new(100),
         }
     }
 }
 
-impl Polygon {
-    pub fn update(&mut self, dt: f32) {
+pub struct RotatingBody {
+    shape: Shape,
+    pub center_of_rotation: egui::Pos2,
+    pub angle: f32,
+    pub angular_velocity: f32,
+    pub moment_of_inertia: f32,
+    pub friction_coefficient: f32,
+    collisions_with_angles: ringbuffer::AllocRingBuffer<(Collision, f32)>,
+}
+
+impl Default for RotatingBody {
+    fn default() -> Self {
+        Self {
+            shape: Shape::regular_polygon(6, 1., Pos2::new(0.0, 0.0)),
+            center_of_rotation: egui::Pos2::new(0.0, 0.0),
+            angle: 0.,
+            angular_velocity: 1.0,
+            moment_of_inertia: 1.0,
+            friction_coefficient: 0.7,
+            collisions_with_angles: ringbuffer::AllocRingBuffer::new(100),
+        }
+    }
+}
+
+impl RotatingBody {
+    pub fn shape_with_rotation_applied(&self) -> Shape {
+        self.shape.rotate(self.angle, self.center_of_rotation)
+    }
+
+    pub fn record_collisions(&mut self, collisions: Vec<Collision>) {
+        for collision in collisions {
+            self.collisions_with_angles.push((collision, self.angle));
+        }
+    }
+
+    pub fn update(&mut self, input: RotatingInput, dt: f32) {
         let friction_torque = -self.friction_coefficient * self.angular_velocity;
-        let brake_torque = if self.brake {
-            -self.braking_torque * self.angular_velocity.signum()
+        let brake_torque = if input.brake {
+            -input.braking_torque * self.angular_velocity.signum()
         } else {
             0.0
         };
 
-        let motor_torque = if self.motor { self.motor_torque } else { 0.0 };
-        let boost_torque = if self.boost { self.boost_torque } else { 0.0 };
+        let motor_torque = if input.motor { input.motor_torque } else { 0.0 };
+        let boost_torque = if input.boost { input.boost_torque } else { 0.0 };
 
         let torque = friction_torque + brake_torque + motor_torque + boost_torque;
         let angular_acceleration = torque / self.moment_of_inertia;
 
         self.angular_velocity += angular_acceleration * dt;
-        let angle_delta = self.angular_velocity * dt;
-        self.angle += angle_delta;
-
-        // Rotate the collisions so they are fixed to the hexagon
-        self.collisions.iter_mut().for_each(|collision| {
-            let p = collision.point - self.center;
-            let p = egui::vec2(
-                p.x * angle_delta.cos() - p.y * angle_delta.sin(),
-                p.x * angle_delta.sin() + p.y * angle_delta.cos(),
-            );
-            collision.point = self.center + p;
-        });
-    }
-
-    pub fn get_points(&self) -> Vec<Pos2> {
-        (0..self.num_sides)
-            .map(|i| {
-                let angle =
-                    self.angle + i as f32 * 2. * std::f32::consts::PI / self.num_sides as f32;
-                self.center + self.radius * egui::vec2(angle.cos(), angle.sin())
-            })
-            .collect()
-    }
-
-    pub fn get_line_segments(&self) -> Vec<(Pos2, Pos2)> {
-        let points = self.get_points();
-        let mut segments = Vec::with_capacity(6);
-
-        for i in 0..self.num_sides {
-            segments.push((points[i], points[(i + 1) % self.num_sides]));
-        }
-
-        segments
+        self.angle += self.angular_velocity * dt;
     }
 
     pub fn draw(&self, ctx: &egui::Context, painter: &egui::Painter, transform: TSTransform) {
-        let points = self
-            .get_points()
-            .into_iter()
-            .map(|p| transform.mul_pos(p))
-            .collect::<Vec<Pos2>>();
+        let shape = self.shape.rotate(self.angle, self.center_of_rotation);
+        shape.draw(ctx, painter, transform);
 
-        let stroke = egui::Stroke::new(1.0, ctx.style().visuals.text_color());
-        painter.add(egui::Shape::closed_line(points, stroke));
-
-        self.collisions.iter().for_each(|collision| {
+        let collisions = self
+            .collisions_with_angles
+            .iter()
+            .map(|(collision, angle)| {
+                collision.rotate(self.angle - *angle, self.center_of_rotation)
+            })
+            .collect::<Vec<Collision>>();
+        for collision in collisions {
             collision.draw(ctx, painter, transform);
-        });
+        }
     }
 }
 
@@ -184,8 +283,11 @@ pub struct App {
     gravity: f32,
     target_frame_rate: f32,
     target_simulation_rate: f32,
+    n_sides: usize,
+    _n_holes: usize,
     previous_frame_times: ringbuffer::AllocRingBuffer<web_time::Instant>,
-    polygon: Polygon,
+    rotating_input: RotatingInput,
+    rotating_body: RotatingBody,
     ball: Ball,
 }
 
@@ -195,8 +297,11 @@ impl Default for App {
             gravity: 9.81,
             target_frame_rate: 60.0,
             target_simulation_rate: 1000.0,
+            n_sides: 6,
+            _n_holes: 0,
             previous_frame_times: ringbuffer::AllocRingBuffer::new(100),
-            polygon: Polygon::default(),
+            rotating_input: RotatingInput::default(),
+            rotating_body: RotatingBody::default(),
             ball: Ball::default(),
         }
     }
@@ -238,9 +343,11 @@ impl App {
 
     fn handle_collisions(&mut self) {
         let ball = &mut self.ball;
-        let hexagon = &mut self.polygon;
+        let rotating_body = &mut self.rotating_body;
 
-        let line_segments = hexagon.get_line_segments();
+        let shape = rotating_body.shape_with_rotation_applied();
+
+        let line_segments = shape.all_segments();
 
         // Determine which, if any, line segments the ball is colliding with
         let collisions = line_segments
@@ -295,11 +402,11 @@ impl App {
             ball.center = average_position + ball.radius * average_normal;
         }
 
-        hexagon.collisions.extend(collisions);
+        rotating_body.record_collisions(collisions);
     }
 
     fn update_physics(&mut self, dt: f32) {
-        self.polygon.update(dt);
+        self.rotating_body.update(self.rotating_input, dt);
         self.ball.update(dt, self.gravity);
         self.handle_collisions();
     }
@@ -364,9 +471,13 @@ impl eframe::App for App {
                 ui.horizontal(|ui| {
                     ui.label("Sides");
                     if ui
-                        .add(egui::Slider::new(&mut self.polygon.num_sides, 3..=12).text("ea"))
+                        .add(egui::Slider::new(&mut self.n_sides, 3..=12).text("ea"))
                         .changed()
                     {
+                        self.rotating_body = RotatingBody {
+                            shape: Shape::regular_polygon(self.n_sides, 1., Pos2::new(0.0, 0.0)),
+                            ..Default::default()
+                        };
                         self.ball.reset();
                     }
                 });
@@ -374,7 +485,7 @@ impl eframe::App for App {
                 ui.horizontal(|ui| {
                     ui.label("Moment of inertia");
                     ui.add(
-                        egui::Slider::new(&mut self.polygon.moment_of_inertia, 0.1..=100.)
+                        egui::Slider::new(&mut self.rotating_body.moment_of_inertia, 0.1..=100.)
                             .text("(kg m²)"),
                     );
                 });
@@ -382,7 +493,7 @@ impl eframe::App for App {
                 ui.horizontal(|ui| {
                     ui.label("Friction coefficient");
                     ui.add(
-                        egui::Slider::new(&mut self.polygon.friction_coefficient, 0.01..=1.0)
+                        egui::Slider::new(&mut self.rotating_body.friction_coefficient, 0.01..=1.0)
                             .text("(N m s)"),
                     );
                 });
@@ -390,7 +501,7 @@ impl eframe::App for App {
                 ui.horizontal(|ui| {
                     ui.label("Braking torque");
                     ui.add(
-                        egui::Slider::new(&mut self.polygon.braking_torque, 0.0..=10.0)
+                        egui::Slider::new(&mut self.rotating_input.braking_torque, 0.0..=10.0)
                             .text("(N m)"),
                     );
                 });
@@ -398,21 +509,23 @@ impl eframe::App for App {
                 ui.horizontal(|ui| {
                     ui.label("Motor torque");
                     ui.add(
-                        egui::Slider::new(&mut self.polygon.motor_torque, 0.0..=10.0).text("(N m)"),
+                        egui::Slider::new(&mut self.rotating_input.motor_torque, 0.0..=10.0)
+                            .text("(N m)"),
                     );
                 });
 
                 ui.horizontal(|ui| {
                     ui.label("Boost torque");
                     ui.add(
-                        egui::Slider::new(&mut self.polygon.boost_torque, 0.0..=10.0).text("(N m)"),
+                        egui::Slider::new(&mut self.rotating_input.boost_torque, 0.0..=10.0)
+                            .text("(N m)"),
                     );
                 });
 
                 ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.polygon.motor, "Motor");
-                    ui.checkbox(&mut self.polygon.brake, "Brake");
-                    ui.checkbox(&mut self.polygon.boost, "Boost");
+                    ui.checkbox(&mut self.rotating_input.motor, "Motor");
+                    ui.checkbox(&mut self.rotating_input.brake, "Brake");
+                    ui.checkbox(&mut self.rotating_input.boost, "Boost");
                 });
             });
 
@@ -438,17 +551,17 @@ impl eframe::App for App {
                     let brake_button =
                         ui.add(egui::Button::new("Brake").min_size(Vec2::new(100., 50.)));
                     if brake_button.is_pointer_button_down_on() {
-                        self.polygon.brake = true;
+                        self.rotating_input.brake = true;
                     } else {
-                        self.polygon.brake = false;
+                        self.rotating_input.brake = false;
                     }
 
                     let boost_button =
                         ui.add(egui::Button::new("Boost").min_size(Vec2::new(100., 50.)));
                     if boost_button.is_pointer_button_down_on() {
-                        self.polygon.boost = true;
+                        self.rotating_input.boost = true;
                     } else {
-                        self.polygon.boost = false;
+                        self.rotating_input.boost = false;
                     }
                 });
 
@@ -460,14 +573,23 @@ impl eframe::App for App {
                 let canvas_rect = response.rect;
 
                 // Define scaling factor so hexagon takes up 80% of the available space
-                let scale = 0.8 * canvas_rect.size().min_elem() / (2. * self.polygon.radius);
+                let max_extent = self
+                    .rotating_body
+                    .shape
+                    .max_extent(self.rotating_body.center_of_rotation);
+
+                let left_top_radius = max_extent.min.to_vec2().length();
+                let bottom_right_radius = max_extent.max.to_vec2().length();
+                let radius = left_top_radius.max(bottom_right_radius);
+
+                let scale = 0.8 * canvas_rect.size().min_elem() / (2. * radius);
 
                 let transform = TSTransform {
                     scaling: scale,
                     translation: canvas_rect.center().to_vec2(),
                 };
 
-                self.polygon.draw(ctx, &painter, transform);
+                self.rotating_body.draw(ctx, &painter, transform);
                 self.ball.draw(ctx, &painter, transform);
             });
         });
