@@ -18,9 +18,14 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "eframe template",
+        "Bouncy",
         native_options,
-        Box::new(|cc| Ok(Box::new(bouncy::App::new(cc)))),
+        Box::new(|cc| {
+            cc.egui_ctx.options_mut(|options| {
+                options.input_options.max_click_duration = f64::INFINITY;
+            });
+            Ok(Box::new(bouncy::App::new(cc)))
+        }),
     )
 }
 

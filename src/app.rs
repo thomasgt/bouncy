@@ -45,6 +45,14 @@ pub struct Polygon {
     pub radius: f32,
     pub angle: f32,
     pub angular_velocity: f32,
+    pub moment_of_inertia: f32,
+    pub friction_coefficient: f32,
+    pub braking_torque: f32,
+    pub motor_torque: f32,
+    pub boost_torque: f32,
+    pub brake: bool,
+    pub motor: bool,
+    pub boost: bool,
     collisions: ringbuffer::AllocRingBuffer<Collision>,
 }
 
@@ -56,6 +64,14 @@ impl Default for Polygon {
             radius: 1.0,
             angle: 0.,
             angular_velocity: 1.0,
+            moment_of_inertia: 1.0,
+            friction_coefficient: 0.7,
+            braking_torque: 1.0,
+            motor_torque: 1.0,
+            boost_torque: 1.0,
+            brake: false,
+            motor: true,
+            boost: false,
             collisions: ringbuffer::AllocRingBuffer::new(100),
         }
     }
@@ -63,6 +79,20 @@ impl Default for Polygon {
 
 impl Polygon {
     pub fn update(&mut self, dt: f32) {
+        let friction_torque = -self.friction_coefficient * self.angular_velocity;
+        let brake_torque = if self.brake {
+            -self.braking_torque * self.angular_velocity.signum()
+        } else {
+            0.0
+        };
+
+        let motor_torque = if self.motor { self.motor_torque } else { 0.0 };
+        let boost_torque = if self.boost { self.boost_torque } else { 0.0 };
+
+        let torque = friction_torque + brake_torque + motor_torque + boost_torque;
+        let angular_acceleration = torque / self.moment_of_inertia;
+
+        self.angular_velocity += angular_acceleration * dt;
         let angle_delta = self.angular_velocity * dt;
         self.angle += angle_delta;
 
@@ -217,18 +247,26 @@ impl App {
             .into_iter()
             .filter_map(|(p1, p2)| {
                 let v = p2 - p1;
-                let n = egui::vec2(-v.y, v.x).normalized();
+                let n1 = egui::vec2(-v.y, v.x).normalized();
 
-                let d = (ball.center - p1).dot(n);
+                let d = (ball.center - p1).dot(n1);
 
                 if d.abs() < ball.radius {
-                    let p = ball.center - d * n;
+                    let p = ball.center - d * n1;
                     let t = (p - p1).dot(v) / v.length_sq();
 
-                    if t >= 0.0 && t <= 1.0 {
-                        Some(Collision::new(p, n))
+                    if t < 0.0 {
+                        // Collision with edge at p1
+                        let n2 = (ball.center - p1).normalized();
+                        let n2 = if n1.dot(n2) > 0. { n2 } else { -n2 };
+                        Some(Collision::new(p1, n2))
+                    } else if t > 1.0 {
+                        // Collision with edge at p2
+                        let n2 = (ball.center - p2).normalized();
+                        let n2 = if n1.dot(n2) > 0. { n2 } else { -n2 };
+                        Some(Collision::new(p2, n2))
                     } else {
-                        None
+                        Some(Collision::new(p, n1))
                     }
                 } else {
                     None
@@ -334,11 +372,47 @@ impl eframe::App for App {
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label("Angular velocity");
+                    ui.label("Moment of inertia");
                     ui.add(
-                        egui::Slider::new(&mut self.polygon.angular_velocity, -5.0..=5.0)
-                            .text("(rad/s)"),
+                        egui::Slider::new(&mut self.polygon.moment_of_inertia, 0.1..=100.)
+                            .text("(kg m²)"),
                     );
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Friction coefficient");
+                    ui.add(
+                        egui::Slider::new(&mut self.polygon.friction_coefficient, 0.01..=1.0)
+                            .text("(N m s)"),
+                    );
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Braking torque");
+                    ui.add(
+                        egui::Slider::new(&mut self.polygon.braking_torque, 0.0..=10.0)
+                            .text("(N m)"),
+                    );
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Motor torque");
+                    ui.add(
+                        egui::Slider::new(&mut self.polygon.motor_torque, 0.0..=10.0).text("(N m)"),
+                    );
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Boost torque");
+                    ui.add(
+                        egui::Slider::new(&mut self.polygon.boost_torque, 0.0..=10.0).text("(N m)"),
+                    );
+                });
+
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.polygon.motor, "Motor");
+                    ui.checkbox(&mut self.polygon.brake, "Brake");
+                    ui.checkbox(&mut self.polygon.boost, "Boost");
                 });
             });
 
@@ -359,7 +433,25 @@ impl eframe::App for App {
 
             ui.separator();
 
-            ui.vertical_centered(|ui| {
+            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                ui.horizontal(|ui| {
+                    let brake_button =
+                        ui.add(egui::Button::new("Brake").min_size(Vec2::new(100., 50.)));
+                    if brake_button.is_pointer_button_down_on() {
+                        self.polygon.brake = true;
+                    } else {
+                        self.polygon.brake = false;
+                    }
+
+                    let boost_button =
+                        ui.add(egui::Button::new("Boost").min_size(Vec2::new(100., 50.)));
+                    if boost_button.is_pointer_button_down_on() {
+                        self.polygon.boost = true;
+                    } else {
+                        self.polygon.boost = false;
+                    }
+                });
+
                 let available_size = ui.available_size();
 
                 // Allocate a painting region that takes up the remaining space
