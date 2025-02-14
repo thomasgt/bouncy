@@ -1,4 +1,4 @@
-use egui::{emath::TSTransform, Color32, Layout, Pos2, Rect, Vec2};
+use egui::{emath::TSTransform, Color32, Pos2, Rect, Vec2};
 use ringbuffer::RingBuffer;
 
 pub struct Collision {
@@ -492,11 +492,11 @@ impl eframe::App for App {
             .show(ctx, |ui| {
                 ui.columns(4, |ui| {
                     let brake_button =
-                        ui[1].add_sized(egui::vec2(100.0, 50.0), egui::Button::new("Brake"));
+                        ui[1].add_sized(egui::vec2(50.0, 50.0), egui::Button::new("Brake"));
                     self.rotating_input.brake = brake_button.is_pointer_button_down_on();
 
                     let boost_button =
-                        ui[2].add_sized(egui::vec2(100.0, 50.0), egui::Button::new("Boost"));
+                        ui[2].add_sized(egui::vec2(50.0, 50.0), egui::Button::new("Boost"));
                     self.rotating_input.boost = boost_button.is_pointer_button_down_on();
                 });
 
