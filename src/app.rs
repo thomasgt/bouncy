@@ -1,4 +1,4 @@
-use egui::{emath::TSTransform, Color32, Pos2, Rect, Vec2};
+use egui::{emath::TSTransform, Color32, Layout, Pos2, Rect, Vec2};
 use ringbuffer::RingBuffer;
 
 pub struct Collision {
@@ -208,7 +208,7 @@ impl RotatingBody {
         }
     }
 
-    pub fn update(&mut self, input: RotatingInput, dt: f32) {
+    pub fn update(&mut self, input: RotatingInput, dt: f32) -> (f32, f32, f32) {
         let friction_torque = -self.friction_coefficient * self.angular_velocity;
         let brake_torque = if input.brake {
             -input.braking_torque * self.angular_velocity.signum()
@@ -223,7 +223,14 @@ impl RotatingBody {
         let angular_acceleration = torque / self.moment_of_inertia;
 
         self.angular_velocity += angular_acceleration * dt;
-        self.angle += self.angular_velocity * dt;
+        let delta_angle = self.angular_velocity * dt;
+        self.angle += delta_angle;
+
+        let brake_work = brake_torque * delta_angle;
+        let boost_work = boost_torque * delta_angle;
+        let motor_work = motor_torque * delta_angle;
+
+        (brake_work, boost_work, motor_work)
     }
 
     pub fn draw(&self, ctx: &egui::Context, painter: &egui::Painter, transform: TSTransform) {
@@ -260,11 +267,6 @@ impl Default for Ball {
 }
 
 impl Ball {
-    pub fn reset(&mut self) {
-        self.center = egui::Pos2::new(0.0, 0.0);
-        self.velocity = egui::Vec2::new(0.0, 0.0);
-    }
-
     pub fn update(&mut self, dt: f32, gravity: f32) {
         self.velocity.y += gravity * dt;
         self.center += self.velocity * dt;
@@ -287,6 +289,9 @@ pub struct App {
     _n_holes: usize,
     previous_frame_times: ringbuffer::AllocRingBuffer<web_time::Instant>,
     rotating_input: RotatingInput,
+    brake_work: f32,
+    boost_work: f32,
+    motor_work: f32,
     rotating_body: RotatingBody,
     ball: Ball,
 }
@@ -301,6 +306,9 @@ impl Default for App {
             _n_holes: 0,
             previous_frame_times: ringbuffer::AllocRingBuffer::new(100),
             rotating_input: RotatingInput::default(),
+            brake_work: 0.0,
+            boost_work: 0.0,
+            motor_work: 0.0,
             rotating_body: RotatingBody::default(),
             ball: Ball::default(),
         }
@@ -313,6 +321,18 @@ impl App {
         // This is also where you can customize the look and feel of egui using
         // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
         Default::default()
+    }
+
+    fn reset(&mut self) {
+        self.rotating_body = RotatingBody {
+            shape: Shape::regular_polygon(self.n_sides, 1., Pos2::new(0.0, 0.0)),
+            ..Default::default()
+        };
+        self.ball = Ball::default();
+
+        self.brake_work = 0.0;
+        self.boost_work = 0.0;
+        self.motor_work = 0.0;
     }
 
     fn update_frame_time(&mut self) -> web_time::Duration {
@@ -406,7 +426,11 @@ impl App {
     }
 
     fn update_physics(&mut self, dt: f32) {
-        self.rotating_body.update(self.rotating_input, dt);
+        let (brake_work, boost_work, motor_work) =
+            self.rotating_body.update(self.rotating_input, dt);
+        self.brake_work += brake_work;
+        self.boost_work += boost_work;
+        self.motor_work += motor_work;
         self.ball.update(dt, self.gravity);
         self.handle_collisions();
     }
@@ -463,6 +487,24 @@ impl eframe::App for App {
             });
         });
 
+        egui::TopBottomPanel::bottom("controls")
+            .show_separator_line(false)
+            .show(ctx, |ui| {
+                ui.columns(4, |ui| {
+                    let brake_button =
+                        ui[1].add_sized(egui::vec2(100.0, 50.0), egui::Button::new("Brake"));
+                    self.rotating_input.brake = brake_button.is_pointer_button_down_on();
+
+                    let boost_button =
+                        ui[2].add_sized(egui::vec2(100.0, 50.0), egui::Button::new("Boost"));
+                    self.rotating_input.boost = boost_button.is_pointer_button_down_on();
+                });
+
+                ui.label(format!("Brake work: {:.2} J", self.brake_work));
+                ui.label(format!("Boost work: {:.2} J", self.boost_work));
+                ui.label(format!("Motor work: {:.2} J", self.motor_work));
+            });
+
         egui::CentralPanel::default().show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
             ui.heading("Bouncy");
@@ -474,11 +516,7 @@ impl eframe::App for App {
                         .add(egui::Slider::new(&mut self.n_sides, 3..=12).text("ea"))
                         .changed()
                     {
-                        self.rotating_body = RotatingBody {
-                            shape: Shape::regular_polygon(self.n_sides, 1., Pos2::new(0.0, 0.0)),
-                            ..Default::default()
-                        };
-                        self.ball.reset();
+                        self.reset();
                     }
                 });
 
@@ -537,61 +575,41 @@ impl eframe::App for App {
             });
 
             if ui
-                .button("Reset Ball")
-                .on_hover_text("Reset the ball's position and velocity.")
+                .button("Reset")
+                .on_hover_text("Reset the simulation")
                 .clicked()
             {
-                self.ball.reset();
+                self.reset();
             }
 
             ui.separator();
 
-            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                ui.horizontal(|ui| {
-                    let brake_button =
-                        ui.add(egui::Button::new("Brake").min_size(Vec2::new(100., 50.)));
-                    if brake_button.is_pointer_button_down_on() {
-                        self.rotating_input.brake = true;
-                    } else {
-                        self.rotating_input.brake = false;
-                    }
+            let available_size = ui.available_size();
 
-                    let boost_button =
-                        ui.add(egui::Button::new("Boost").min_size(Vec2::new(100., 50.)));
-                    if boost_button.is_pointer_button_down_on() {
-                        self.rotating_input.boost = true;
-                    } else {
-                        self.rotating_input.boost = false;
-                    }
-                });
+            // Allocate a painting region that takes up the remaining space
+            let (response, painter) = ui.allocate_painter(available_size, egui::Sense::hover());
 
-                let available_size = ui.available_size();
+            let canvas_rect = response.rect;
 
-                // Allocate a painting region that takes up the remaining space
-                let (response, painter) = ui.allocate_painter(available_size, egui::Sense::hover());
+            // Define scaling factor so hexagon takes up 80% of the available space
+            let max_extent = self
+                .rotating_body
+                .shape
+                .max_extent(self.rotating_body.center_of_rotation);
 
-                let canvas_rect = response.rect;
+            let left_top_radius = max_extent.min.to_vec2().length();
+            let bottom_right_radius = max_extent.max.to_vec2().length();
+            let radius = left_top_radius.max(bottom_right_radius);
 
-                // Define scaling factor so hexagon takes up 80% of the available space
-                let max_extent = self
-                    .rotating_body
-                    .shape
-                    .max_extent(self.rotating_body.center_of_rotation);
+            let scale = 0.8 * canvas_rect.size().min_elem() / (2. * radius);
 
-                let left_top_radius = max_extent.min.to_vec2().length();
-                let bottom_right_radius = max_extent.max.to_vec2().length();
-                let radius = left_top_radius.max(bottom_right_radius);
+            let transform = TSTransform {
+                scaling: scale,
+                translation: canvas_rect.center().to_vec2(),
+            };
 
-                let scale = 0.8 * canvas_rect.size().min_elem() / (2. * radius);
-
-                let transform = TSTransform {
-                    scaling: scale,
-                    translation: canvas_rect.center().to_vec2(),
-                };
-
-                self.rotating_body.draw(ctx, &painter, transform);
-                self.ball.draw(ctx, &painter, transform);
-            });
+            self.rotating_body.draw(ctx, &painter, transform);
+            self.ball.draw(ctx, &painter, transform);
         });
     }
 }
