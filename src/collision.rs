@@ -30,11 +30,11 @@ impl Collision {
 
         let normal = {
             let n = self.normal;
-            let n = egui::vec2(
+            
+            egui::vec2(
                 n.x * angle.cos() - n.y * angle.sin(),
                 n.x * angle.sin() + n.y * angle.cos(),
-            );
-            n
+            )
         };
 
         Self {

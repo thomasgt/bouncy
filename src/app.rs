@@ -1,9 +1,9 @@
-use egui::{emath::TSTransform, Pos2, Vec2};
+use egui::{emath::TSTransform, Pos2};
 use ringbuffer::RingBuffer;
 
 use crate::{
-    ball::{self, Ball},
-    collision::{self, Collision},
+    ball::Ball,
+    collision::Collision,
     drawable::Drawable,
     rotating::{RotatingBody, RotatingInput},
     shape::Shape,
@@ -59,7 +59,7 @@ impl App {
         };
 
         self.rotating_body = RotatingBody {
-            shape: shape,
+            shape,
             ..Default::default()
         };
         self.ball = Ball::default();
@@ -166,7 +166,7 @@ impl App {
         self.ball.center = closest_collision.point + closest_collision.normal * self.ball.radius;
 
         self.rotating_body
-            .record_collisions(vec![closest_collision.clone()])
+            .record_collisions(vec![*closest_collision])
     }
 
     fn update_physics(&mut self, dt: f32) {
