@@ -1,6 +1,7 @@
 use egui::{emath::TSTransform, Color32, Pos2, Rect, Vec2};
 use ringbuffer::RingBuffer;
 
+#[derive(Clone, Copy, Debug)]
 pub struct Collision {
     pub point: Pos2,
     pub normal: Vec2,
@@ -219,10 +220,15 @@ impl RotatingBody {
         let motor_torque = if input.motor { input.motor_torque } else { 0.0 };
         let boost_torque = if input.boost { input.boost_torque } else { 0.0 };
 
-        let torque = friction_torque + brake_torque + motor_torque + boost_torque;
-        let angular_acceleration = torque / self.moment_of_inertia;
+        if input.brake && self.angular_velocity.abs() < 0.001 {
+            self.angular_velocity = 0.0;
+        } else {
+            let torque = friction_torque + brake_torque + motor_torque + boost_torque;
+            let angular_acceleration = torque / self.moment_of_inertia;
 
-        self.angular_velocity += angular_acceleration * dt;
+            self.angular_velocity += angular_acceleration * dt;
+        }
+
         let delta_angle = self.angular_velocity * dt;
         self.angle += delta_angle;
 
@@ -503,6 +509,10 @@ impl eframe::App for App {
                 ui.label(format!("Brake work: {:.2} J", self.brake_work));
                 ui.label(format!("Boost work: {:.2} J", self.boost_work));
                 ui.label(format!("Motor work: {:.2} J", self.motor_work));
+                ui.label(format!(
+                    "Angular velocity: {:.5} rad/s",
+                    self.rotating_body.angular_velocity
+                ));
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
