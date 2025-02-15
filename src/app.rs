@@ -2,8 +2,8 @@ use egui::{emath::TSTransform, Pos2, Vec2};
 use ringbuffer::RingBuffer;
 
 use crate::{
-    ball::Ball,
-    collision::Collision,
+    ball::{self, Ball},
+    collision::{self, Collision},
     drawable::Drawable,
     rotating::{RotatingBody, RotatingInput},
     shape::Shape,
@@ -12,7 +12,7 @@ use crate::{
 pub struct App {
     gravity: f32,
     target_frame_rate: f32,
-    target_simulation_rate: f32,
+    simulation_rate: f32,
     n_sides: usize,
     _n_holes: usize,
     previous_frame_times: ringbuffer::AllocRingBuffer<web_time::Instant>,
@@ -28,8 +28,8 @@ impl Default for App {
     fn default() -> Self {
         Self {
             gravity: 9.81,
-            target_frame_rate: 60.0,
-            target_simulation_rate: 1000.0,
+            target_frame_rate: 60.,
+            simulation_rate: 1024.,
             n_sides: 6,
             _n_holes: 0,
             previous_frame_times: ringbuffer::AllocRingBuffer::new(100),
@@ -95,16 +95,16 @@ impl App {
         (self.previous_frame_times.len() as f32 - 1.0) / elapsed_secs
     }
 
-    fn handle_collisions(&mut self) {
-        let ball = &mut self.ball;
-        let rotating_body = &mut self.rotating_body;
+    fn detect_collisions(&self) -> Vec<Collision> {
+        let ball = &self.ball;
+        let rotating_body = &self.rotating_body;
 
         let shape = rotating_body.shape_with_rotation_applied();
 
         let line_segments = shape.all_segments();
 
         // Determine which, if any, line segments the ball is colliding with
-        let collisions = line_segments
+        line_segments
             .into_iter()
             .filter_map(|(p1, p2)| {
                 let v = p2 - p1;
@@ -140,30 +140,33 @@ impl App {
                     None
                 }
             })
-            .collect::<Vec<Collision>>();
+            .collect()
+    }
 
-        // Resolve collisions by reflecting the ball's velocity about the normal of the line segments. If there
-        // are multiple collisions, average the final velocity.
-        if !collisions.is_empty() {
-            let average_normal = collisions
-                .iter()
-                .fold(Vec2::ZERO, |acc, collision| acc + collision.normal);
-            let average_normal = average_normal.normalized();
+    fn handle_collisions(&mut self, ball_previous_position: Pos2) {
+        let collisions = self.detect_collisions();
 
-            ball.velocity =
-                ball.velocity - 2.0 * ball.velocity.dot(average_normal) * average_normal;
-
-            // Correct the ball's position so it is not intersecting with the hexagon
-            let p = collisions
-                .iter()
-                .fold(Pos2::ZERO, |acc, collision| acc + collision.point.to_vec2());
-
-            let average_position = p / collisions.len() as f32;
-
-            ball.center = average_position + ball.radius * average_normal;
+        if collisions.is_empty() {
+            return;
         }
 
-        rotating_body.record_collisions(collisions);
+        // Pick the collision that is closest to the ball's previous position
+        let closest_collision = collisions
+            .iter()
+            .min_by(|a, b| {
+                let dist_a = (a.point - ball_previous_position).length();
+                let dist_b = (b.point - ball_previous_position).length();
+                dist_a.partial_cmp(&dist_b).unwrap()
+            })
+            .unwrap();
+
+        self.ball.velocity = self.ball.velocity
+            - 2.0 * self.ball.velocity.dot(closest_collision.normal) * closest_collision.normal;
+
+        self.ball.center = closest_collision.point + closest_collision.normal * self.ball.radius;
+
+        self.rotating_body
+            .record_collisions(vec![closest_collision.clone()])
     }
 
     fn update_physics(&mut self, dt: f32) {
@@ -172,8 +175,9 @@ impl App {
         self.brake_work += brake_work;
         self.boost_work += boost_work;
         self.motor_work += motor_work;
+        let ball_previous_position = self.ball.center;
         self.ball.update(dt, self.gravity);
-        self.handle_collisions();
+        self.handle_collisions(ball_previous_position);
     }
 }
 
@@ -183,8 +187,8 @@ impl eframe::App for App {
         let dt = self.update_frame_time().as_secs_f32();
         let fps = self.compute_fps();
 
-        let n_sub_steps = (dt * self.target_simulation_rate).round();
-        let dt_sim = dt / n_sub_steps;
+        let n_sub_steps = (dt * self.simulation_rate).round();
+        let dt_sim = 1. / self.simulation_rate;
 
         for _ in 0..n_sub_steps as usize {
             self.update_physics(dt_sim);
