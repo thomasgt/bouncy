@@ -1,291 +1,13 @@
-use egui::{emath::TSTransform, Color32, Pos2, Rect, Vec2};
+use egui::{emath::TSTransform, Pos2, Vec2};
 use ringbuffer::RingBuffer;
 
-#[derive(Clone, Copy, Debug)]
-pub struct Collision {
-    pub point: Pos2,
-    pub normal: Vec2,
-    pub time: web_time::Instant,
-}
-
-impl Collision {
-    pub fn new(point: Pos2, normal: Vec2) -> Self {
-        Self {
-            point,
-            normal,
-            time: web_time::Instant::now(),
-        }
-    }
-
-    pub fn rotate(&self, angle: f32, center_of_rotation: Pos2) -> Self {
-        let point = {
-            let p = self.point - center_of_rotation;
-            let p = egui::vec2(
-                p.x * angle.cos() - p.y * angle.sin(),
-                p.x * angle.sin() + p.y * angle.cos(),
-            );
-            center_of_rotation + p
-        };
-
-        let normal = {
-            let n = self.normal;
-            let n = egui::vec2(
-                n.x * angle.cos() - n.y * angle.sin(),
-                n.x * angle.sin() + n.y * angle.cos(),
-            );
-            n
-        };
-
-        Self {
-            point,
-            normal,
-            time: self.time,
-        }
-    }
-
-    pub fn draw(&self, ctx: &egui::Context, painter: &egui::Painter, transform: TSTransform) {
-        let age = (web_time::Instant::now() - self.time).as_secs_f32();
-        let size = 10. * age;
-        let opacity = 1.0 - age / 2.;
-
-        if size <= 0.0 || opacity <= 0.0 {
-            return;
-        }
-
-        let point = transform.mul_pos(self.point);
-        let warn_colour = ctx.style().visuals.warn_fg_color;
-
-        let fill_colour = Color32::from_rgba_unmultiplied(
-            warn_colour.r(),
-            warn_colour.g(),
-            warn_colour.b(),
-            (255. * opacity) as u8,
-        );
-
-        painter.add(egui::Shape::circle_filled(point, size, fill_colour));
-    }
-}
-
-pub type Segment = (Pos2, Pos2);
-pub type Line = Vec<Pos2>;
-
-pub struct Shape {
-    pub lines: Vec<Line>,
-}
-
-impl Shape {
-    pub fn regular_polygon(num_sides: usize, radius: f32, center: Pos2) -> Self {
-        let angle = 2. * std::f32::consts::PI / num_sides as f32;
-        let lines = (0..num_sides + 1)
-            .map(|i| {
-                let angle = i as f32 * angle;
-                center + radius * egui::vec2(angle.cos(), angle.sin())
-            })
-            .collect();
-
-        Self { lines: vec![lines] }
-    }
-
-    pub fn all_segments(&self) -> Vec<Segment> {
-        self.lines
-            .iter()
-            .flat_map(|line| line.windows(2).map(|w| (w[0], w[1])))
-            .collect()
-    }
-
-    pub fn all_points(&self) -> Vec<Pos2> {
-        self.lines
-            .iter()
-            .flat_map(|line| line.iter().copied())
-            .collect()
-    }
-
-    pub fn max_extent(&self, center_of_rotation: Pos2) -> Rect {
-        let radiuses = self
-            .all_points()
-            .iter()
-            .map(|p| (*p - center_of_rotation).length())
-            .collect::<Vec<f32>>();
-
-        let max_radius = radiuses.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-
-        Rect::from_center_size(center_of_rotation, Vec2::splat(2. * max_radius))
-    }
-
-    pub fn draw(&self, ctx: &egui::Context, painter: &egui::Painter, transform: TSTransform) {
-        let lines = self
-            .lines
-            .iter()
-            .map(|line| {
-                line.iter()
-                    .map(|p| transform.mul_pos(*p))
-                    .collect::<Vec<Pos2>>()
-            })
-            .collect::<Vec<Line>>();
-
-        let stroke = egui::Stroke::new(1.0, ctx.style().visuals.text_color());
-        for line in lines {
-            painter.add(egui::Shape::line(line, stroke));
-        }
-    }
-
-    pub fn rotate(&self, angle: f32, center_of_rotation: Pos2) -> Self {
-        let lines = self
-            .lines
-            .iter()
-            .map(|line| {
-                line.iter()
-                    .map(|p| {
-                        let p = *p - center_of_rotation;
-                        let p = egui::vec2(
-                            p.x * angle.cos() - p.y * angle.sin(),
-                            p.x * angle.sin() + p.y * angle.cos(),
-                        );
-                        center_of_rotation + p
-                    })
-                    .collect()
-            })
-            .collect();
-
-        Self { lines }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct RotatingInput {
-    pub braking_torque: f32,
-    pub motor_torque: f32,
-    pub boost_torque: f32,
-    pub brake: bool,
-    pub motor: bool,
-    pub boost: bool,
-}
-
-impl Default for RotatingInput {
-    fn default() -> Self {
-        Self {
-            braking_torque: 2.0,
-            motor_torque: 1.0,
-            boost_torque: 1.0,
-            brake: false,
-            motor: true,
-            boost: false,
-        }
-    }
-}
-
-pub struct RotatingBody {
-    shape: Shape,
-    pub center_of_rotation: egui::Pos2,
-    pub angle: f32,
-    pub angular_velocity: f32,
-    pub moment_of_inertia: f32,
-    pub friction_coefficient: f32,
-    collisions_with_angles: ringbuffer::AllocRingBuffer<(Collision, f32)>,
-}
-
-impl Default for RotatingBody {
-    fn default() -> Self {
-        Self {
-            shape: Shape::regular_polygon(6, 1., Pos2::new(0.0, 0.0)),
-            center_of_rotation: egui::Pos2::new(0.0, 0.0),
-            angle: 0.,
-            angular_velocity: 1.0,
-            moment_of_inertia: 1.0,
-            friction_coefficient: 0.7,
-            collisions_with_angles: ringbuffer::AllocRingBuffer::new(100),
-        }
-    }
-}
-
-impl RotatingBody {
-    pub fn shape_with_rotation_applied(&self) -> Shape {
-        self.shape.rotate(self.angle, self.center_of_rotation)
-    }
-
-    pub fn record_collisions(&mut self, collisions: Vec<Collision>) {
-        for collision in collisions {
-            self.collisions_with_angles.push((collision, self.angle));
-        }
-    }
-
-    pub fn update(&mut self, input: RotatingInput, dt: f32) -> (f32, f32, f32) {
-        let friction_torque = -self.friction_coefficient * self.angular_velocity;
-        let brake_torque = if input.brake {
-            -input.braking_torque * self.angular_velocity.signum()
-        } else {
-            0.0
-        };
-
-        let motor_torque = if input.motor { input.motor_torque } else { 0.0 };
-        let boost_torque = if input.boost { input.boost_torque } else { 0.0 };
-
-        if input.brake && self.angular_velocity.abs() < 0.001 {
-            self.angular_velocity = 0.0;
-        } else {
-            let torque = friction_torque + brake_torque + motor_torque + boost_torque;
-            let angular_acceleration = torque / self.moment_of_inertia;
-
-            self.angular_velocity += angular_acceleration * dt;
-        }
-
-        let delta_angle = self.angular_velocity * dt;
-        self.angle += delta_angle;
-
-        let brake_work = brake_torque * delta_angle;
-        let boost_work = boost_torque * delta_angle;
-        let motor_work = motor_torque * delta_angle;
-
-        (brake_work, boost_work, motor_work)
-    }
-
-    pub fn draw(&self, ctx: &egui::Context, painter: &egui::Painter, transform: TSTransform) {
-        let shape = self.shape.rotate(self.angle, self.center_of_rotation);
-        shape.draw(ctx, painter, transform);
-
-        let collisions = self
-            .collisions_with_angles
-            .iter()
-            .map(|(collision, angle)| {
-                collision.rotate(self.angle - *angle, self.center_of_rotation)
-            })
-            .collect::<Vec<Collision>>();
-        for collision in collisions {
-            collision.draw(ctx, painter, transform);
-        }
-    }
-}
-
-pub struct Ball {
-    pub center: egui::Pos2,
-    pub radius: f32,
-    pub velocity: egui::Vec2,
-}
-
-impl Default for Ball {
-    fn default() -> Self {
-        Self {
-            center: egui::Pos2::new(0.0, 0.0),
-            radius: 0.05,
-            velocity: egui::Vec2::new(0.0, 0.0),
-        }
-    }
-}
-
-impl Ball {
-    pub fn update(&mut self, dt: f32, gravity: f32) {
-        self.velocity.y += gravity * dt;
-        self.center += self.velocity * dt;
-    }
-
-    pub fn draw(&self, ctx: &egui::Context, painter: &egui::Painter, transform: TSTransform) {
-        let center = transform.mul_pos(self.center);
-        let radius = self.radius * transform.scaling;
-
-        let fill = ctx.style().visuals.error_fg_color;
-        painter.add(egui::Shape::circle_filled(center, radius, fill));
-    }
-}
+use crate::{
+    ball::Ball,
+    collision::Collision,
+    drawable::Drawable,
+    rotating::{RotatingBody, RotatingInput},
+    shape::Shape,
+};
 
 pub struct App {
     gravity: f32,
@@ -330,8 +52,14 @@ impl App {
     }
 
     fn reset(&mut self) {
+        let shape = if self.n_sides >= 3 {
+            Shape::regular_polygon(self.n_sides, 1., Pos2::new(0.0, 0.0))
+        } else {
+            Shape::funky_polygon()
+        };
+
         self.rotating_body = RotatingBody {
-            shape: Shape::regular_polygon(self.n_sides, 1., Pos2::new(0.0, 0.0)),
+            shape: shape,
             ..Default::default()
         };
         self.ball = Ball::default();
@@ -389,15 +117,22 @@ impl App {
                     let t = (p - p1).dot(v) / v.length_sq();
 
                     if t < 0.0 {
-                        // Collision with edge at p1
-                        let n2 = (ball.center - p1).normalized();
+                        // Possible collision with edge at p1
+                        let n2 = ball.center - p1;
+                        if n2.length() > ball.radius {
+                            return None;
+                        }
+
                         let n2 = if n1.dot(n2) > 0. { n2 } else { -n2 };
-                        Some(Collision::new(p1, n2))
+                        Some(Collision::new(p1, n2.normalized()))
                     } else if t > 1.0 {
-                        // Collision with edge at p2
-                        let n2 = (ball.center - p2).normalized();
+                        // Possible collision with edge at p2
+                        let n2 = ball.center - p2;
+                        if n2.length() > ball.radius {
+                            return None;
+                        }
                         let n2 = if n1.dot(n2) > 0. { n2 } else { -n2 };
-                        Some(Collision::new(p2, n2))
+                        Some(Collision::new(p2, n2.normalized()))
                     } else {
                         Some(Collision::new(p, n1))
                     }
@@ -523,7 +258,7 @@ impl eframe::App for App {
                 ui.horizontal(|ui| {
                     ui.label("Sides");
                     if ui
-                        .add(egui::Slider::new(&mut self.n_sides, 3..=12).text("ea"))
+                        .add(egui::Slider::new(&mut self.n_sides, 2..=12).text("ea"))
                         .changed()
                     {
                         self.reset();
