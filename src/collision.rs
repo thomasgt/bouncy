@@ -1,9 +1,6 @@
 use egui::{Pos2, Vec2};
 
-use crate::{
-    ball::{Ball},
-    shape::Segment,
-};
+use crate::{ball::Ball, shape::Segment};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Collision {

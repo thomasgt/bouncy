@@ -60,9 +60,7 @@ impl App {
     }
 
     pub fn simple_polygons(cc: &eframe::CreationContext<'_>) -> Self {
-        let levels = (3..=6)
-            .map(|num_sides| Level::simple_polygon(num_sides))
-            .collect();
+        let levels = (3..=6).map(Level::simple_polygon).collect();
 
         Self::new(cc, 60.0, levels)
     }
