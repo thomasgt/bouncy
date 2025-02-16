@@ -24,7 +24,7 @@ fn main() -> eframe::Result {
             cc.egui_ctx.options_mut(|options| {
                 options.input_options.max_click_duration = f64::INFINITY;
             });
-            Ok(Box::new(bouncy::App::new(cc)))
+            Ok(Box::new(bouncy::App::simple_polygons(cc)))
         }),
     )
 }
@@ -59,7 +59,7 @@ fn main() {
                     cc.egui_ctx.options_mut(|options| {
                         options.input_options.max_click_duration = f64::INFINITY;
                     });
-                    Ok(Box::new(bouncy::App::new(cc)))
+                    Ok(Box::new(bouncy::App::simple_polygons(cc)))
                 }),
             )
             .await;

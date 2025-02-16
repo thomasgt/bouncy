@@ -1,16 +1,10 @@
-use egui::{emath::TSTransform, Pos2};
+use egui::emath::TSTransform;
 use ringbuffer::RingBuffer;
-use serde::{ser, Deserialize, Serialize};
 
 use crate::{
-    ball::Ball,
-    collision::{self, Collision},
-    control::{Input, InputSet, InputSetWork},
     drawable::Drawable,
     game::{self, Game},
-    level::{self, Level},
-    rotating::{self, Body, CollisionList},
-    shape::Shape,
+    level::Level,
 };
 
 #[derive(Debug)]
@@ -65,6 +59,14 @@ impl App {
         }
     }
 
+    pub fn simple_polygons(cc: &eframe::CreationContext<'_>) -> Self {
+        let levels = (3..=6)
+            .map(|num_sides| Level::simple_polygon(num_sides))
+            .collect();
+
+        Self::new(cc, 60.0, levels)
+    }
+
     fn compute_fps(&self) -> f32 {
         if self.previous_frame_times.len() < 2 {
             return self.target_frame_rate;
@@ -78,34 +80,19 @@ impl App {
         (self.previous_frame_times.len() as f32 - 1.0) / elapsed_secs
     }
 
-    fn draw_menu(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Bouncy");
-
-            ui.label("Select a level to play:");
-
-            for level in &self.levels {
-                if ui.button(&level.name).clicked() {
-                    self.state = State::Playing(Game::new(level.clone(), 1024.));
-                }
-            }
-        });
-    }
-
-    fn draw_game(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame, fps: f32) {
-        let game = if let State::Playing(game) = &mut self.state {
-            game
-        } else {
-            return;
-        };
-        // Schedule a repaint at the next frame
-        ctx.request_repaint_after(web_time::Duration::from_secs_f32(
-            1.0 / self.target_frame_rate,
-        ));
-
+    fn draw_chrome(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame, fps: f32) {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 egui::widgets::global_theme_preference_buttons(ui);
+            });
+        });
+
+        egui::TopBottomPanel::top("menu").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.heading("SpinScape");
+                if ui.button("Menu").clicked() {
+                    self.state = State::Menu;
+                }
             });
         });
 
@@ -119,14 +106,32 @@ impl App {
                 egui::warn_if_debug_build(ui);
             });
         });
+    }
 
-        egui::TopBottomPanel::top("menu")
+    fn draw_menu(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.label("Select a level to play:");
+
+                for level in &self.levels {
+                    if ui.button(&level.name).clicked() {
+                        self.state = State::Playing(Game::new(level.clone(), 1024.));
+                    }
+                }
+            });
+        });
+    }
+
+    fn draw_game(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let game = if let State::Playing(game) = &mut self.state {
+            game
+        } else {
+            panic!("Invalid game state");
+        };
+
+        egui::TopBottomPanel::top("countdown")
             .show_separator_line(false)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.heading("SpinScape");
-                });
-
                 let elapsed = (web_time::Instant::now() - game.start_time).as_secs_f32();
                 let limit = game.level.max_time.as_secs_f32();
                 let remaining = limit - elapsed;
@@ -134,15 +139,15 @@ impl App {
 
                 ui.add(
                     egui::ProgressBar::new(time_progress)
-                        .text(format!("Time remaining: {:.2} s", remaining)),
+                        .text(format!("Time remaining: {:.1} s", remaining)),
                 );
 
                 let work_remaining = game.work_remaining();
                 let work_progress = work_remaining / game.level.max_work;
-                ui.add(
-                    egui::ProgressBar::new(work_progress)
-                        .text(format!("Work remaining: {:.2} J", work_remaining)),
-                );
+                ui.add(egui::ProgressBar::new(work_progress).text(format!(
+                    "Power remaining: {:.0} %",
+                    (work_progress * 100.).round()
+                )));
             });
 
         egui::TopBottomPanel::bottom("controls")
@@ -209,11 +214,13 @@ impl eframe::App for App {
         self.previous_frame_times.push(web_time::Instant::now());
         let fps = self.compute_fps();
 
+        self.draw_chrome(ctx, _frame, fps);
+
         match &mut self.state {
             State::Menu => self.draw_menu(ctx, _frame),
             State::Playing(g) => {
                 let game_state = g.update();
-                self.draw_game(ctx, _frame, fps);
+                self.draw_game(ctx, _frame);
 
                 match game_state {
                     game::State::Won => {

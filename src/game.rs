@@ -3,7 +3,7 @@ use ringbuffer::RingBuffer;
 
 use crate::{
     collision,
-    control::{InputSet, InputSetWork},
+    control::InputSetWork,
     drawable::Drawable,
     level::Level,
     rotating::{self, CollisionList},
@@ -130,7 +130,7 @@ impl Drawable for Game {
     fn draw(&self, ctx: &egui::Context, painter: &egui::Painter, transform: TSTransform) {
         self.level.body.draw(ctx, painter, transform);
         self.collision_list.iter().for_each(|collision| {
-            collision.draw(ctx, &painter, transform);
+            collision.draw(ctx, painter, transform);
         });
         self.level.ball.draw(ctx, painter, transform);
     }

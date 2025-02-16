@@ -1,7 +1,7 @@
 use egui::{Pos2, Vec2};
 
 use crate::{
-    ball::{self, Ball},
+    ball::{Ball},
     shape::Segment,
 };
 
