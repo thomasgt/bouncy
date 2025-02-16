@@ -6,6 +6,10 @@
 fn main() -> eframe::Result {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
+    let levels_data = include_str!("../data/default_levels.json");
+    let levels: Vec<bouncy::level::Level> =
+        serde_json::from_str(levels_data).expect("Failed to parse levels");
+
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([400.0, 300.0])
@@ -24,7 +28,7 @@ fn main() -> eframe::Result {
             cc.egui_ctx.options_mut(|options| {
                 options.input_options.max_click_duration = f64::INFINITY;
             });
-            Ok(Box::new(bouncy::App::simple_polygons(cc)))
+            Ok(Box::new(bouncy::App::new(cc, 1024.0, levels)))
         }),
     )
 }

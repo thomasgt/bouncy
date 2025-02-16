@@ -3,11 +3,11 @@
 mod app;
 pub use app::App;
 
-mod ball;
-mod collision;
-mod control;
-mod drawable;
-mod game;
-mod level;
-mod rotating;
-mod shape;
+pub mod ball;
+pub mod collision;
+pub mod control;
+pub mod drawable;
+pub mod game;
+pub mod level;
+pub mod rotating;
+pub mod shape;

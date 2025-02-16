@@ -1,4 +1,4 @@
-use egui::emath::TSTransform;
+use egui::{emath::TSTransform, Color32, RichText};
 use ringbuffer::RingBuffer;
 
 use crate::{
@@ -60,7 +60,8 @@ impl App {
     }
 
     pub fn simple_polygons(cc: &eframe::CreationContext<'_>) -> Self {
-        let levels = (3..=6).map(Level::simple_polygon).collect();
+        let mut levels: Vec<Level> = (3..=6).map(Level::simple_polygon).collect();
+        levels.push(Level::funky_polygon());
 
         Self::new(cc, 60.0, levels)
     }
@@ -153,12 +154,28 @@ impl App {
             .show(ctx, |ui| {
                 ui.add_enabled_ui(game.inputs_enabled(), |ui| {
                     ui.columns(4, |ui| {
-                        let brake_button =
-                            ui[1].add_sized(egui::vec2(50.0, 50.0), egui::Button::new("Brake"));
+                        let brake_button = ui[1].add_sized(
+                            egui::vec2(50.0, 50.0),
+                            egui::Button::new(
+                                RichText::new("Brake")
+                                    .strong()
+                                    .heading()
+                                    .color(Color32::BLACK),
+                            )
+                            .fill(Color32::LIGHT_RED),
+                        );
                         game.level.input.brake.active = brake_button.is_pointer_button_down_on();
 
-                        let boost_button =
-                            ui[2].add_sized(egui::vec2(50.0, 50.0), egui::Button::new("Boost"));
+                        let boost_button = ui[2].add_sized(
+                            egui::vec2(50.0, 50.0),
+                            egui::Button::new(
+                                RichText::new("Boost")
+                                    .strong()
+                                    .heading()
+                                    .color(Color32::BLACK),
+                            )
+                            .fill(Color32::LIGHT_GREEN),
+                        );
                         game.level.input.boost.active = boost_button.is_pointer_button_down_on();
                     });
                 });
