@@ -1,8 +1,9 @@
 use egui::{emath::TSTransform, Pos2, Vec2};
+use serde::{Deserialize, Serialize};
 
 use crate::drawable::Drawable;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct Ball {
     pub center: Pos2,
     pub radius: f32,

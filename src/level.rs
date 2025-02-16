@@ -1,11 +1,15 @@
-use egui::Pos2;
+use serde::{Deserialize, Serialize};
 
-use crate::{ball::Ball, shape::Shape};
+use crate::{ball::Ball, control::InputSet, rotating::Body};
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Level {
+    pub id: uuid::Uuid,
     pub name: String,
-    pub shape: Shape,
-    pub center_of_rotation: Pos2,
-    pub initial_ball: Ball,
+    pub body: Body,
+    pub ball: Ball,
+    pub input: InputSet,
+    pub gravity: f32,
+    pub max_time: web_time::Duration,
+    pub max_work: f32,
 }

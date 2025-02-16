@@ -1,11 +1,12 @@
 use egui::{emath::TSTransform, Pos2, Rect, Vec2};
+use serde::{Deserialize, Serialize};
 
 use crate::drawable::Drawable;
 
 pub type Segment = (Pos2, Pos2);
 pub type Line = Vec<Pos2>;
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Shape {
     pub lines: Vec<Line>,
 }

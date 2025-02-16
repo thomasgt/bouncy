@@ -1,21 +1,19 @@
-use egui::{emath::TSTransform, Color32, Pos2, Vec2};
+use egui::{Pos2, Vec2};
 
-use crate::drawable::Drawable;
+use crate::{
+    ball::{self, Ball},
+    shape::Segment,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Collision {
     pub point: Pos2,
     pub normal: Vec2,
-    pub time: web_time::Instant,
 }
 
 impl Collision {
     pub fn new(point: Pos2, normal: Vec2) -> Self {
-        Self {
-            point,
-            normal,
-            time: web_time::Instant::now(),
-        }
+        Self { point, normal }
     }
 
     pub fn rotate(&self, angle: f32, center_of_rotation: Pos2) -> Self {
@@ -30,41 +28,47 @@ impl Collision {
 
         let normal = {
             let n = self.normal;
-            
+
             egui::vec2(
                 n.x * angle.cos() - n.y * angle.sin(),
                 n.x * angle.sin() + n.y * angle.cos(),
             )
         };
 
-        Self {
-            point,
-            normal,
-            time: self.time,
-        }
+        Self { point, normal }
     }
 }
 
-impl Drawable for Collision {
-    fn draw(&self, ctx: &egui::Context, painter: &egui::Painter, transform: TSTransform) {
-        let age = (web_time::Instant::now() - self.time).as_secs_f32();
-        let size = 10. * age;
-        let opacity = 1.0 - age / 2.;
+pub fn detect_collision(segment: Segment, ball: Ball) -> Option<Collision> {
+    let p1 = segment.0;
+    let p2 = segment.1;
 
-        if size <= 0.0 || opacity <= 0.0 {
-            return;
+    let v = p2 - p1;
+    let v_length = v.length();
+    let n1 = egui::vec2(-v.y, v.x).normalized();
+
+    let d = (ball.center - p1).dot(n1);
+
+    if d.abs() < ball.radius {
+        let p = ball.center - d * n1;
+        let t = (p - p1).dot(v) / v_length;
+
+        if t >= -ball.radius && t < 0.0 {
+            // Collision with edge at p1
+            let n2 = ball.center - p1;
+            let n2 = if n1.dot(n2) > 0. { n2 } else { -n2 };
+            Some(Collision::new(p1, n2.normalized()))
+        } else if t > v_length && t <= v_length + ball.radius {
+            // Collision with edge at p2
+            let n2 = ball.center - p2;
+            let n2 = if n1.dot(n2) > 0. { n2 } else { -n2 };
+            Some(Collision::new(p2, n2.normalized()))
+        } else if t >= 0.0 && t <= v_length {
+            Some(Collision::new(p, n1))
+        } else {
+            None
         }
-
-        let point = transform.mul_pos(self.point);
-        let warn_colour = ctx.style().visuals.warn_fg_color;
-
-        let fill_colour = Color32::from_rgba_unmultiplied(
-            warn_colour.r(),
-            warn_colour.g(),
-            warn_colour.b(),
-            (255. * opacity) as u8,
-        );
-
-        painter.add(egui::Shape::circle_filled(point, size, fill_colour));
+    } else {
+        None
     }
 }

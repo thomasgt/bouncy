@@ -1,42 +1,80 @@
-use egui::{emath::TSTransform, Pos2};
+use egui::{emath::TSTransform, Color32, Pos2};
 use ringbuffer::RingBuffer;
+use serde::{Deserialize, Serialize};
 
-use crate::{collision::Collision, drawable::Drawable, shape::Shape};
+use crate::{
+    collision,
+    control::{InputSet, InputSetWork},
+    drawable::Drawable,
+    shape::Shape,
+};
 
-#[derive(Clone, Copy, Debug)]
-pub struct RotatingInput {
-    pub braking_torque: f32,
-    pub motor_torque: f32,
-    pub boost_torque: f32,
-    pub brake: bool,
-    pub motor: bool,
-    pub boost: bool,
+#[derive(Debug, Clone)]
+pub struct Collision {
+    pub collision: collision::Collision,
+    pub center_of_rotation: Pos2,
+    pub angle: f32,
+    pub time: web_time::Instant,
 }
 
-impl Default for RotatingInput {
-    fn default() -> Self {
+pub type CollisionList = ringbuffer::AllocRingBuffer<Collision>;
+
+impl Collision {
+    pub fn new(collision: collision::Collision, center_of_rotation: Pos2) -> Self {
         Self {
-            braking_torque: 2.0,
-            motor_torque: 1.0,
-            boost_torque: 1.0,
-            brake: false,
-            motor: true,
-            boost: false,
+            collision,
+            center_of_rotation,
+            angle: 0.0,
+            time: web_time::Instant::now(),
         }
+    }
+
+    pub fn update(&mut self, delta_angle: f32) {
+        self.angle += delta_angle;
     }
 }
 
-pub struct RotatingBody {
+impl Drawable for Collision {
+    fn draw(&self, ctx: &egui::Context, painter: &egui::Painter, transform: TSTransform) {
+        let collision = self.collision.rotate(self.angle, self.center_of_rotation);
+        let age = (web_time::Instant::now() - self.time).as_secs_f32();
+        let size = 10. * age;
+        let opacity = 1.0 - age / 2.;
+
+        if size <= 0.0 || opacity <= 0.0 {
+            return;
+        }
+
+        let point = transform.mul_pos(collision.point);
+        let warn_colour = ctx.style().visuals.warn_fg_color;
+
+        let fill_colour = Color32::from_rgba_unmultiplied(
+            warn_colour.r(),
+            warn_colour.g(),
+            warn_colour.b(),
+            (255. * opacity) as u8,
+        );
+
+        painter.add(egui::Shape::circle_filled(point, size, fill_colour));
+    }
+}
+
+pub struct BodyUpdateResult {
+    pub work: InputSetWork,
+    pub delta_angle: f32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Body {
     pub shape: Shape,
     pub center_of_rotation: egui::Pos2,
     pub angle: f32,
     pub angular_velocity: f32,
     pub moment_of_inertia: f32,
     pub friction_coefficient: f32,
-    pub collisions_with_angles: ringbuffer::AllocRingBuffer<(Collision, f32)>,
 }
 
-impl Default for RotatingBody {
+impl Default for Body {
     fn default() -> Self {
         Self {
             shape: Shape::regular_polygon(6, 1., Pos2::new(0.0, 0.0)),
@@ -45,34 +83,36 @@ impl Default for RotatingBody {
             angular_velocity: 1.0,
             moment_of_inertia: 1.0,
             friction_coefficient: 0.7,
-            collisions_with_angles: ringbuffer::AllocRingBuffer::new(100),
         }
     }
 }
 
-impl RotatingBody {
+impl Body {
     pub fn shape_with_rotation_applied(&self) -> Shape {
         self.shape.rotate(self.angle, self.center_of_rotation)
     }
 
-    pub fn record_collisions(&mut self, collisions: Vec<Collision>) {
-        for collision in collisions {
-            self.collisions_with_angles.push((collision, self.angle));
-        }
-    }
-
-    pub fn update(&mut self, input: RotatingInput, dt: f32) -> (f32, f32, f32) {
+    pub fn update(&mut self, input: InputSet, dt: f32) -> BodyUpdateResult {
         let friction_torque = -self.friction_coefficient * self.angular_velocity;
-        let brake_torque = if input.brake {
-            -input.braking_torque * self.angular_velocity.signum()
+        let brake_torque = if input.brake.active {
+            -input.brake.torque * self.angular_velocity.signum()
         } else {
             0.0
         };
 
-        let motor_torque = if input.motor { input.motor_torque } else { 0.0 };
-        let boost_torque = if input.boost { input.boost_torque } else { 0.0 };
+        let motor_torque = if input.motor.active {
+            input.motor.torque
+        } else {
+            0.0
+        };
 
-        if input.brake && self.angular_velocity.abs() < 0.001 {
+        let boost_torque = if input.boost.active {
+            input.boost.torque
+        } else {
+            0.0
+        };
+
+        if input.brake.active && self.angular_velocity.abs() < 0.001 {
             self.angular_velocity = 0.0;
         } else {
             let torque = friction_torque + brake_torque + motor_torque + boost_torque;
@@ -84,28 +124,24 @@ impl RotatingBody {
         let delta_angle = self.angular_velocity * dt;
         self.angle += delta_angle;
 
-        let brake_work = brake_torque * delta_angle;
+        let brake_work = -brake_torque * delta_angle;
         let boost_work = boost_torque * delta_angle;
         let motor_work = motor_torque * delta_angle;
 
-        (brake_work, boost_work, motor_work)
+        BodyUpdateResult {
+            work: InputSetWork {
+                brake: brake_work,
+                motor: motor_work,
+                boost: boost_work,
+            },
+            delta_angle,
+        }
     }
 }
 
-impl Drawable for RotatingBody {
+impl Drawable for Body {
     fn draw(&self, ctx: &egui::Context, painter: &egui::Painter, transform: TSTransform) {
         let shape = self.shape.rotate(self.angle, self.center_of_rotation);
         shape.draw(ctx, painter, transform);
-
-        let collisions = self
-            .collisions_with_angles
-            .iter()
-            .map(|(collision, angle)| {
-                collision.rotate(self.angle - *angle, self.center_of_rotation)
-            })
-            .collect::<Vec<Collision>>();
-        for collision in collisions {
-            collision.draw(ctx, painter, transform);
-        }
     }
 }
