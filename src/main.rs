@@ -41,6 +41,10 @@ fn main() {
     // Redirect `log` message to `console.log` and friends:
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
+    let levels_data = include_str!("../data/default_levels.json");
+    let levels: Vec<bouncy::level::Level> =
+        serde_json::from_str(levels_data).expect("Failed to parse levels");
+
     let web_options = eframe::WebOptions::default();
 
     wasm_bindgen_futures::spawn_local(async {
@@ -63,7 +67,7 @@ fn main() {
                     cc.egui_ctx.options_mut(|options| {
                         options.input_options.max_click_duration = f64::INFINITY;
                     });
-                    Ok(Box::new(bouncy::App::simple_polygons(cc)))
+                    Ok(Box::new(bouncy::App::new(cc, 1024.0, levels)))
                 }),
             )
             .await;
