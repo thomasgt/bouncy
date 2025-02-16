@@ -3,7 +3,7 @@ use ringbuffer::RingBuffer;
 
 use crate::{
     collision,
-    control::InputSetWork,
+    control::{Input, InputSet, InputSetWork},
     drawable::Drawable,
     level::Level,
     rotating::{self, CollisionList},
@@ -63,11 +63,33 @@ impl Game {
 
     pub fn work_remaining(&self) -> f32 {
         let work_spent = self.input_work.brake + self.input_work.boost;
-        self.level.max_work - work_spent
+        (self.level.max_work - work_spent).max(0.0)
+    }
+
+    pub fn inputs_enabled(&self) -> bool {
+        self.work_remaining() > 0.0
+    }
+
+    fn input(&self) -> InputSet {
+        if self.inputs_enabled() {
+            self.level.input
+        } else {
+            InputSet {
+                brake: Input {
+                    torque: 0.0,
+                    active: false,
+                },
+                boost: Input {
+                    torque: 0.0,
+                    active: false,
+                },
+                ..self.level.input
+            }
+        }
     }
 
     fn update_physics(&mut self) {
-        let update_result = self.level.body.update(self.level.input, self.tick_dt);
+        let update_result = self.level.body.update(self.input(), self.tick_dt);
         self.input_work += update_result.work;
         self.collision_list.iter_mut().for_each(|collision| {
             collision.update(update_result.delta_angle);

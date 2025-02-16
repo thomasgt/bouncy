@@ -151,7 +151,7 @@ impl App {
         egui::TopBottomPanel::bottom("controls")
             .show_separator_line(false)
             .show(ctx, |ui| {
-                ui.add_enabled_ui(game.work_remaining() > 0., |ui| {
+                ui.add_enabled_ui(game.inputs_enabled(), |ui| {
                     ui.columns(4, |ui| {
                         let brake_button =
                             ui[1].add_sized(egui::vec2(50.0, 50.0), egui::Button::new("Brake"));
