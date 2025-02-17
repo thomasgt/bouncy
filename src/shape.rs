@@ -24,54 +24,22 @@ impl Shape {
         Self { lines: vec![lines] }
     }
 
-    pub fn funky_polygon() -> Self {
-        let lines = vec![
-            vec![
-                Pos2::new(1.0, 0.0),
-                Pos2::new(0.9, 0.4),
-                Pos2::new(0.8, 0.6),
-                Pos2::new(0.2, 1.0),
-                Pos2::new(0.0, 1.0),
-                Pos2::new(0.4, 0.7),
-                Pos2::new(-0.6, 0.5),
-                Pos2::new(-1.0, 0.0),
-            ],
-            vec![
-                Pos2::new(-1.0, -0.2),
-                Pos2::new(-0.5, -0.5),
-                Pos2::new(0.0, -1.0),
-                Pos2::new(0.3, -0.8),
-                Pos2::new(0.6, -0.4),
-                Pos2::new(1.0, 0.0),
-            ],
-        ];
-
-        Self { lines }
-    }
-
-    pub fn funky_polygon2() -> Self {
-        Self {
-            lines: vec![vec![
-                Pos2::new(1.000, 0.000),
-                Pos2::new(0.809, 0.588),
-                Pos2::new(0.309, 0.951),
-                Pos2::new(-0.309, 0.951),
-                Pos2::new(-0.809, 0.588),
-                Pos2::new(-0.700, 0.000),
-                Pos2::new(-0.809, -0.588),
-                Pos2::new(-0.309, -0.951),
-                Pos2::new(0.309, -0.951),
-                Pos2::new(0.809, -0.588),
-                Pos2::new(1.000, 0.000),
-            ]],
-        }
-    }
-
     pub fn all_segments(&self) -> Vec<Segment> {
         self.lines
             .iter()
             .flat_map(|line| line.windows(2).map(|w| (w[0], w[1])))
             .collect()
+    }
+
+    pub fn all_segments_including_openings(&self) -> Vec<Segment> {
+        let points: Vec<Pos2> = self.lines.iter().flatten().copied().collect();
+        let mut segments: Vec<Segment> = points.windows(2).map(|w| (w[0], w[1])).collect();
+
+        if points.first() != points.last() {
+            segments.push((*points.last().unwrap(), *points.first().unwrap()));
+        }
+
+        segments
     }
 
     pub fn all_points(&self) -> Vec<Pos2> {
@@ -131,5 +99,47 @@ impl Drawable for Shape {
         for line in lines {
             painter.add(egui::Shape::line(line, stroke));
         }
+    }
+}
+
+pub fn compute_winding_number(point: Pos2, shape: &Shape) -> i32 {
+    let mut winding_number = 0;
+
+    // Use Sunday's algorithm to compute the winding number without trigonometry
+    // Use points vs segments because there may be openings in the shape and we want to treat the polygon
+    // as closed for this calculation
+    for segment in shape.all_segments_including_openings() {
+        let (start, end) = segment;
+        // Check if horizontal ray from point intersects with segment
+        if (start.y > point.y) != (end.y > point.y) {
+            // Check if ray intersects with segment
+            if point.x < (end.x - start.x) * (point.y - start.y) / (end.y - start.y) + start.x {
+                // If the ray intersects with the segment, check if it intersects from the left
+                if end.y > start.y {
+                    winding_number += 1;
+                } else {
+                    winding_number -= 1;
+                }
+            }
+        }
+    }
+
+    winding_number
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_winding_number() {
+        let shape = Shape::regular_polygon(4, 1.0, Pos2::ZERO);
+
+        assert_eq!(compute_winding_number(Pos2::ZERO, &shape), 1);
+        assert_eq!(compute_winding_number(Pos2::new(1., 1.), &shape), 0);
+        assert_eq!(compute_winding_number(Pos2::new(0., 0.5), &shape), 1);
+        assert_eq!(compute_winding_number(Pos2::new(-1., 0.5), &shape), 0);
+        assert_eq!(compute_winding_number(Pos2::new(-4., 0.0), &shape), 0);
+        assert_eq!(compute_winding_number(Pos2::new(-1., 1.), &shape), 0);
     }
 }

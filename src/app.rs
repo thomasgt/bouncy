@@ -11,8 +11,8 @@ use crate::{
 pub enum State {
     Menu,
     Playing(Game),
-    Won,
-    Lost,
+    Victory(Game),
+    Defeat(Game),
 }
 
 #[derive(Debug)]
@@ -59,13 +59,6 @@ impl App {
         }
     }
 
-    pub fn simple_polygons(cc: &eframe::CreationContext<'_>) -> Self {
-        let mut levels: Vec<Level> = (3..=6).map(Level::simple_polygon).collect();
-        levels.push(Level::funky_polygon());
-
-        Self::new(cc, 60.0, levels)
-    }
-
     fn compute_fps(&self) -> f32 {
         if self.previous_frame_times.len() < 2 {
             return self.target_frame_rate;
@@ -107,25 +100,41 @@ impl App {
         });
     }
 
-    fn draw_menu(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn handle_menu(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) -> Option<State> {
+        let mut new_state = None;
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.label("Select a level to play:");
 
                 for level in &self.levels {
                     if ui.button(&level.name).clicked() {
-                        self.state = State::Playing(Game::new(level.clone(), 1024.));
+                        new_state = Some(State::Playing(Game::new(level.clone(), 1024.)));
                     }
                 }
             });
         });
+
+        new_state
     }
 
-    fn draw_game(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn handle_game(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) -> Option<State> {
         let game = if let State::Playing(game) = &mut self.state {
             game
         } else {
             panic!("Invalid game state");
+        };
+
+        let game_state = game.update();
+        let next_state = match game_state {
+            game::State::Victory => Some(State::Victory(game.clone())),
+            game::State::Defeat => Some(State::Defeat(game.clone())),
+            game::State::Playing => {
+                // Schedule a repaint at the next frame
+                ctx.request_repaint_after(web_time::Duration::from_secs_f32(
+                    1.0 / self.target_frame_rate,
+                ));
+                None
+            }
         };
 
         egui::TopBottomPanel::top("countdown")
@@ -213,6 +222,36 @@ impl App {
                 collision.draw(ctx, &painter, transform);
             });
         });
+
+        next_state
+    }
+
+    fn handle_victory(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) -> Option<State> {
+        let mut new_state = None;
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.label("Congratulations! You have won!");
+                if ui.button("Play again").clicked() {
+                    new_state = Some(State::Menu);
+                }
+            });
+        });
+
+        new_state
+    }
+
+    fn draw_defeat(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) -> Option<State> {
+        let mut new_state = None;
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.label("You have lost. Better luck next time!");
+                if ui.button("Try again").clicked() {
+                    new_state = Some(State::Menu);
+                }
+            });
+        });
+
+        new_state
     }
 }
 
@@ -231,29 +270,15 @@ impl eframe::App for App {
 
         self.draw_chrome(ctx, _frame, fps);
 
-        match &mut self.state {
-            State::Menu => self.draw_menu(ctx, _frame),
-            State::Playing(g) => {
-                let game_state = g.update();
-                self.draw_game(ctx, _frame);
+        let new_state = match &self.state {
+            State::Menu => self.handle_menu(ctx, _frame),
+            State::Playing(_) => self.handle_game(ctx, _frame),
+            State::Victory(snapshot) => self.handle_victory(ctx, _frame),
+            State::Defeat(snapshot) => self.draw_defeat(ctx, _frame),
+        };
 
-                match game_state {
-                    game::State::Won => {
-                        self.state = State::Menu;
-                    }
-                    game::State::GameOver => {
-                        self.state = State::Menu;
-                    }
-                    game::State::Playing => {
-                        // Schedule a repaint at the next frame
-                        ctx.request_repaint_after(web_time::Duration::from_secs_f32(
-                            1.0 / self.target_frame_rate,
-                        ));
-                    }
-                }
-            }
-            State::Won => {}
-            State::Lost => {}
+        if let Some(new_state) = new_state {
+            self.state = new_state;
         }
     }
 }

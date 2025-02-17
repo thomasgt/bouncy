@@ -7,16 +7,17 @@ use crate::{
     drawable::Drawable,
     level::Level,
     rotating::{self, CollisionList},
+    shape::compute_winding_number,
 };
 
 #[derive(Debug)]
 pub enum State {
     Playing,
-    Won,
-    GameOver,
+    Victory,
+    Defeat,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Game {
     pub start_time: web_time::Instant,
     pub tick_rate: f32,
@@ -48,17 +49,29 @@ impl Game {
 
         // TODO Implement this in terms of ticks to allow buzzer beaters
         if elapsed > self.level.max_time {
-            return State::GameOver;
+            return State::Defeat;
         }
 
         let target_ticks = (elapsed.as_secs_f32() * self.tick_rate).round() as u64;
         while self.tick_counter < target_ticks {
             self.tick_counter += 1;
             self.update_physics();
+            if self.has_escaped() {
+                return State::Victory;
+            }
         }
 
         self.frame_counter += 1;
         State::Playing
+    }
+
+    pub fn has_escaped(&self) -> bool {
+        let winding_number = compute_winding_number(
+            self.level.ball.center,
+            &self.level.body.shape_with_rotation_applied(),
+        );
+
+        winding_number == 0
     }
 
     pub fn work_remaining(&self) -> f32 {
