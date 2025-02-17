@@ -128,14 +128,13 @@ impl App {
         let next_state = match game_state {
             game::State::Victory => Some(State::Victory(game.clone())),
             game::State::Defeat => Some(State::Defeat(game.clone())),
-            game::State::Playing => {
-                // Schedule a repaint at the next frame
-                ctx.request_repaint_after(web_time::Duration::from_secs_f32(
-                    1.0 / self.target_frame_rate,
-                ));
-                None
-            }
+            game::State::Playing => None,
         };
+
+        // Schedule a repaint at the next frame
+        ctx.request_repaint_after(web_time::Duration::from_secs_f32(
+            1.0 / self.target_frame_rate,
+        ));
 
         egui::TopBottomPanel::top("countdown")
             .show_separator_line(false)

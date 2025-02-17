@@ -1,4 +1,4 @@
-use egui::{emath::TSTransform, Pos2};
+use egui::{emath::TSTransform, Pos2, Vec2};
 use ringbuffer::RingBuffer;
 
 use crate::{
@@ -136,28 +136,41 @@ impl Game {
             return;
         }
 
-        // Pick the collision that is closest to the ball's previous position
-        let closest_collision = collisions
+        let aggregate_normal = collisions
             .iter()
-            .min_by(|a, b| {
-                let dist_a = (a.point - ball_previous_position).length();
-                let dist_b = (b.point - ball_previous_position).length();
-                dist_a.partial_cmp(&dist_b).unwrap()
-            })
-            .unwrap();
+            .map(|collision| collision.normal)
+            .fold(Vec2::ZERO, |acc, n| acc + n)
+            .normalized();
 
         self.level.ball.velocity = self.level.ball.velocity
-            - 2.0
-                * self.level.ball.velocity.dot(closest_collision.normal)
-                * closest_collision.normal;
+            - 2.0 * self.level.ball.velocity.dot(aggregate_normal) * aggregate_normal;
+
+        let delta_angle = -self.level.body.angular_velocity * self.tick_dt;
+
+        // Pick the collision that is closest for the shape and ball's previous position
+        let closest_collision = collisions
+            .iter()
+            .map(|collision| {
+                let rotated = collision.rotate(delta_angle, self.level.body.center_of_rotation);
+                (collision, rotated.point)
+            })
+            .min_by(|a, b| {
+                let dist_a = (a.1 - ball_previous_position).length();
+                let dist_b = (b.1 - ball_previous_position).length();
+
+                dist_a.partial_cmp(&dist_b).unwrap()
+            })
+            .unwrap()
+            .0;
 
         self.level.ball.center =
             closest_collision.point + closest_collision.normal * self.level.ball.radius;
 
-        let rotating_collision =
-            rotating::Collision::new(*closest_collision, self.level.body.center_of_rotation);
+        let rotating_collisions = collisions.into_iter().map(|collision| {
+            rotating::Collision::new(collision, self.level.body.center_of_rotation)
+        });
 
-        self.collision_list.push(rotating_collision);
+        self.collision_list.extend(rotating_collisions);
     }
 }
 
